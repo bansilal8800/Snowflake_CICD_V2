@@ -1,0 +1,4 @@
+variables:
+  sf_schema: bronze
+  new_var: test_value
+  new_schema: silver_test

@@ -1,0 +1,3 @@
+variables:
+  sf_schema: silver
+  sf_schema_test: silver_test_100

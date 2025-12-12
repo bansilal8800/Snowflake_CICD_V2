@@ -1,0 +1,8 @@
+config-version: 1.0
+root-folder: gold/migrations/scripts  # Keep relative to repo root; change "bronze" to the schema name for each file
+vars:
+  database_name: "{{ env_var('SF_DATABASE') }}"
+create-change-history-table: true
+change-history-table: "{{ env_var('SF_DATABASE') }}.{{ env_var('SCHEMA') }}.CHANGE_HISTORY"
+query-tag: "SCHEMACHANGE_DEPLOY_{{ env_var('SCHEMA') | upper }}"
+autocommit: true  # Optional: Enables auto-commit for DML

@@ -1,0 +1,11 @@
+CREATE SCHEMA IF NOT EXISTS {{ database_name }}.{{ sf_schema }};
+CREATE OR REPLACE TABLE {{ database_name }}.{{ sf_schema }}.silver_table_test_raw
+(
+    SALE_ID VARCHAR,
+    PRODUCT_ID VARCHAR,
+    SALE_DATE DATE,
+    QUANTITY INT,
+    UNIT_PRICE FLOAT,
+    STORE_ID VARCHAR,
+    _INSERTED_TIMESTAMP TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+);
