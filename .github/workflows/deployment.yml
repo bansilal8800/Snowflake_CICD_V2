@@ -89,6 +89,10 @@ jobs:
           git commit -m "Auto-generated migrations from CONFIG_SNOWFLAKE_CICD [skip ci]" || echo "Nothing to commit"
           git push origin HEAD:${{ github.ref_name }} || echo "Nothing to push"
 
+      - name: Cleanup
+        if: always()
+        run: rm -f private_key.pem || true
+
   # 3. Deploy – only runs if extraction succeeded AND there is something to deploy
   deploy-schema:
     needs: [build-matrix, extract-ddl]
@@ -111,6 +115,13 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Refresh checkout to latest commit (after extraction push)
+        run: |
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }}
+          echo "Now at latest commit: $(git rev-parse HEAD)"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -149,3 +160,7 @@ jobs:
             --snowflake-private-key-path private_key.pem \
             --vars "$VARS_CONTENT" \
             --verbose
+
+      - name: Cleanup
+        if: always()
+        run: rm -f private_key.pem
