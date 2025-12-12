@@ -1,4 +1,4 @@
-name: Snowflake SchemaChange + DDL Extraction
+name: Snowflake SchemaChange Deployment
 
 on:
   push:
@@ -7,18 +7,36 @@ on:
       - uat
       - prod
   workflow_dispatch:
-    inputs:
-      extract_ddl:
-        description: 'Force run DDL extraction?'
-        type: boolean
-        default: true
-        required: false
 
 jobs:
-  # --------------------------------------------------------------
-  # 1. DDL Extraction Job – runs on EVERY push + manual
-  # --------------------------------------------------------------
+  # 1. Generate Matrix (always runs)
+  build-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyyaml schemachange
+
+      - name: Generate matrix
+        id: set-matrix
+        run: |
+          controllers=$(python config/get_controller.py)
+          echo "matrix={\"schema\": $controllers}" >> $GITHUB_OUTPUT
+
+  # 2. Extract DDL (runs after matrix, fails fast on error)
   extract-ddl:
+    needs: build-matrix
     runs-on: ubuntu-latest
     environment: >-
       ${{ 
@@ -38,79 +56,38 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install snowflake-connector-python[cryptography] pandas pyyaml
+          pip install snowflake-connector-python cryptography pandas
 
       - name: Create private key file
         run: |
           echo "${{ secrets.SF_PRIVATE_KEY }}" > private_key.pem
           chmod 600 private_key.pem
 
-      - name: Extract DDL from CONFIG_SNOWFLAKE_CICD
-        id: extract
+      - name: Run DDL extraction
         env:
           SF_DATABASE: ${{ secrets.SF_DATABASE }}
           SF_ACCOUNT: ${{ secrets.SF_ACCOUNT }}
           SF_USERNAME: ${{ secrets.SF_USERNAME }}
           SF_ROLE: ${{ secrets.SF_ROLE }}
           SF_WAREHOUSE: ${{ secrets.SF_WAREHOUSE }}
-        run: |
-          echo "Running DDL extraction from CONFIG_SNOWFLAKE_CICD table..."
-          python config/extract_ddl.py | tee extraction.log
-          cat extraction.log
+        run: python config/extract_ddl.py
 
-      - name: Show what was created (if any)
-        if: steps.extract.outcome == 'success'
-        run: |
-          echo "=== Files created by extraction ==="
-          git status --porcelain | grep -E '\.sql$' || echo "No new migration files created"
-          echo "=== Preview of new migration files ==="
-          find . -name "V*__RELEASE_*.sql" -type f -newer extraction.log -print -exec cat {} \; || echo "No new files"
-
-      - name: Commit & push new migration files (skip CI loop)
-        if: steps.extract.outcome == 'success'
+      - name: Commit and push new migrations
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
           git add .
-          git commit -m "Auto-generated migrations from CONFIG_SNOWFLAKE_CICD [skip ci]" || echo "Nothing to commit"
-          git push origin ${{ github.ref_name }} || echo "Nothing to push"
+          git commit -m "Auto-generated migrations from CONFIG_SNOWFLAKE_CICD [skip ci]" || echo "No changes to commit"
+          git push || echo "No changes to push"
 
       - name: Cleanup private key
         if: always()
-        run: rm -f private_key.pem extraction.log
+        run: rm -f private_key.pem
 
-  # --------------------------------------------------------------
-  # 2. Normal SchemaChange Deployment – runs ONLY if commit message does NOT contain [skip ci]
-  # --------------------------------------------------------------
-  build-matrix:
-    needs: extract-ddl
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-    steps:
-      - name: Checkout repository (fresh after extraction)
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pyyaml schemachange
-
-      - name: Generate deployment matrix
-        id: set-matrix
-        run: |
-          controllers=$(python config/get_controller.py)
-          echo "matrix={\"schema\": $controllers}" >> $GITHUB_OUTPUT
-
+  # 3. Deploy (only if previous succeeded, skip on [skip ci])
   deploy-schema:
-    needs: [extract-ddl, build-matrix]
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    needs: extract-ddl
+    if: success() && !contains(github.event.head_commit.message, '[skip ci]')
     runs-on: ubuntu-latest
     environment: >-
       ${{ 
@@ -120,8 +97,8 @@ jobs:
       }}
     strategy:
       matrix: ${{ fromJson(needs.build-matrix.outputs.matrix) }}
-      max-parallel: 5
-      fail-fast: false
+      max-parallel: 3
+      fail-fast: true
 
     steps:
       - name: Checkout repository
@@ -164,4 +141,3 @@ jobs:
             --snowflake-private-key-path private_key.pem \
             --vars "$VARS_CONTENT" \
             --verbose
-
