@@ -80,7 +80,7 @@ jobs:
       - name: Remove private key before commit (security!)
         run: rm -f private_key.pem
 
-            - name: Commit & push new migrations
+      - name: Commit & push new migrations
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
