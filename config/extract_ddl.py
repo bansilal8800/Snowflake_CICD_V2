@@ -71,7 +71,7 @@ except Exception as e:
 
 if df.empty:
     print("No pending releases (RELEASE_STATUS = 'N'). Skipping extraction.")
-    sys.exit(0)  # Clean exit - not failure
+    sys.exit(0)
 
 print(f"Found {len(df)} pending rows:")
 print(df.to_string(index=False))
@@ -92,46 +92,60 @@ def get_next_version(scripts_dir):
                 pass
         if versions:
             max_v = max(versions)
-            next_v = f"{max_v[0]}.{max_v[1]}.{max_v[2] + 1}"
+            return f"{max_v[0]}.{max_v[1]}.{max_v[2] + 1}"
         else:
-            next_v = "1.0.0"
-        return next_v
+            return "1.0.0"
     except Exception as e:
         fail(f"Failed to get next version for {scripts_dir}: {e}")
 
-# Process groups
-try:
-    for release_no, group in df.groupby('CICD_RELEASE_NO'):
-        release_dir = group['RELEASE_DIR'].iloc[0].strip().upper()
-        print(f"\nProcessing group CICD_RELEASE_NO = {release_no} (RELEASE_DIR = {release_dir})")
-        
-        scripts_dir = f"{release_dir.lower()}/migrations/scripts"
-        next_version = get_next_version(scripts_dir)
-        file_name = f"V{next_version}__RELEASE_{release_no}.sql"
-        file_path = f"{scripts_dir}/{file_name}"
-        
-        print(f"Creating file: {file_path}")
-        
-        with open(file_path, 'w') as f:
-            for _, row in group.iterrows():
-                full_object = f"{row['OBJECT_DATABASE']}.{row['OBJECT_SCHEMA']}.{row['OBJECT_NAME']}"
-                print(f"  → Fetching DDL for {full_object} ({row['OBJECT_TYPE']})")
-                try:
-                    cur.execute(f"SELECT GET_DDL('{row['OBJECT_TYPE']}', '{full_object}', TRUE)")
-                    ddl = cur.fetchone()[0]
-                    f.write(ddl + ';\n\n')
-                    print(f"    DDL preview: {ddl[:200]}...")  # Short preview
-                except Exception as e:
-                    fail(f"Failed to get DDL for {full_object}: {e}")
-        
-        print(f"Created {file_path} successfully")
+# Process each group = one migration file
+for release_no, group in df.groupby('CICD_RELEASE_NO'):
+    target_schema = group['RELEASE_DIR'].iloc[0].strip().upper()  # e.g. GOLD
+    print(f"\nProcessing release {release_no} → deploying to schema: {target_schema}")
 
-        # Update status
-        cur.execute(f"UPDATE {table} SET RELEASE_STATUS = 'Y' WHERE CICD_RELEASE_NO = {release_no}")
-        print(f"Updated RELEASE_STATUS to 'Y' for {release_no}")
-except Exception as e:
-    fail(f"Failed during processing: {e}")
+    scripts_dir = f"{target_schema.lower()}/migrations/scripts"
+    next_version = get_next_version(scripts_dir)
+    file_name = f"V{next_version}__RELEASE_{release_no}.sql"
+    file_path = f"{scripts_dir}/{file_name}"
+
+    print(f"Creating migration file: {file_path}")
+
+    with open(file_path, 'w') as f:
+        for _, row in group.iterrows():
+            source_db = row['OBJECT_DATABASE']
+            source_schema = row['OBJECT_SCHEMA']
+            object_name = row['OBJECT_NAME']
+            object_type = row['OBJECT_TYPE']
+
+            full_source_object = f"{source_db}.{source_schema}.{object_name}"
+            print(f"  → Extracting DDL: {full_source_object} ({object_type})")
+
+            try:
+                cur.execute(f"SELECT GET_DDL('{object_type}', '{full_source_object}', TRUE)")
+                original_ddl = cur.fetchone()[0]
+
+                # REPLACE SOURCE SCHEMA WITH TARGET SCHEMA
+                # This handles both quoted and unquoted identifiers safely
+                modified_ddl = original_ddl \
+                    .replace(f"{source_schema.upper()}.", f"{target_schema}.") \
+                    .replace(f'"{source_schema}".', f'"{target_schema}".') \
+                    .replace(f"{source_schema.lower()}.", f"{target_schema}.")
+
+                # Also replace in the middle of fully qualified names
+                modified_ddl = modified_ddl.replace(f"{source_db}.{source_schema}.", f"{source_db}.{target_schema}.")
+
+                f.write(modified_ddl.strip() + ';\n\n')
+                print(f"    Success: Rewrote schema {source_schema} → {target_schema}")
+
+            except Exception as e:
+                fail(f"Failed to get or rewrite DDL for {full_source_object}: {e}")
+
+    print(f"Successfully created {file_path}")
+
+    # Update status in Snowflake
+    cur.execute(f"UPDATE {table} SET RELEASE_STATUS = 'Y' WHERE CICD_RELEASE_NO = {release_no}")
+    print(f"Updated RELEASE_STATUS = 'Y' for release {release_no}")
 
 conn.commit()
 conn.close()
-print("\nExtraction completed successfully!")
+print("\nDDL extraction and schema rewrite completed successfully!")
