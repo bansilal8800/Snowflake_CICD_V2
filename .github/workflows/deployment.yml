@@ -78,16 +78,16 @@ jobs:
         run: python config/extract_ddl.py
 
       - name: Commit & push new migrations
+        env:
+          GHA_TOKEN: ${{ secrets.GHA_TOKEN }}
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
+          git remote set-url origin https://x-access-token:${GHA_TOKEN}@github.com/${{ github.repository }}.git
           git add .
           git commit -m "Auto-generated migrations from CONFIG_SNOWFLAKE_CICD [skip ci]" || echo "Nothing to commit"
-          git push || echo "Nothing to push"
+          git push origin HEAD:${{ github.ref_name }} || echo "Nothing to push"
 
-      - name: Cleanup
-        if: always()
-        run: rm -f private_key.pem
 
   # 3. Deploy – only runs if extraction succeeded AND there is something to deploy
   deploy-schema:
