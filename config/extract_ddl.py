@@ -62,7 +62,7 @@ print(f"Found config table: {table}")
 
 # Query pending rows
 try:
-    cur.execute(f"SELECT * FROM {table} WHERE RELEASE_STATUS = 'N' ORDER BY CICID_RELEASE_NO")
+    cur.execute(f"SELECT * FROM {table} WHERE RELEASE_STATUS = 'N' ORDER BY CICD_RELEASE_NO")
     rows = cur.fetchall()
     columns = [desc[0] for desc in cur.description]
     df = pd.DataFrame(rows, columns=columns)
@@ -101,9 +101,9 @@ def get_next_version(scripts_dir):
 
 # Process groups
 try:
-    for release_no, group in df.groupby('CICID_RELEASE_NO'):
+    for release_no, group in df.groupby('CICD_RELEASE_NO'):
         release_dir = group['RELEASE_DIR'].iloc[0].strip().upper()
-        print(f"\nProcessing group CICID_RELEASE_NO = {release_no} (RELEASE_DIR = {release_dir})")
+        print(f"\nProcessing group CICD_RELEASE_NO = {release_no} (RELEASE_DIR = {release_dir})")
         
         scripts_dir = f"{release_dir.lower()}/migrations/scripts"
         next_version = get_next_version(scripts_dir)
@@ -127,7 +127,7 @@ try:
         print(f"Created {file_path} successfully")
 
         # Update status
-        cur.execute(f"UPDATE {table} SET RELEASE_STATUS = 'Y' WHERE CICID_RELEASE_NO = {release_no}")
+        cur.execute(f"UPDATE {table} SET RELEASE_STATUS = 'Y' WHERE CICD_RELEASE_NO = {release_no}")
         print(f"Updated RELEASE_STATUS to 'Y' for {release_no}")
 except Exception as e:
     fail(f"Failed during processing: {e}")
