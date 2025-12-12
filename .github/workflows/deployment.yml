@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  # 1. Generate Matrix (always runs)
+  # 1. ALWAYS generate the matrix (even if extraction fails)
   build-matrix:
     runs-on: ubuntu-latest
     outputs:
@@ -18,7 +18,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      -name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -28,13 +28,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyyaml schemachange
 
-      - name: Generate matrix
+      - name: Generate matrix (default to empty if script fails)
         id: set-matrix
         run: |
-          controllers=$(python config/get_controller.py)
-          echo "matrix={\"schema\": $controllers}" >> $GITHUB_OUTPUT
+          if python config/get_controller.py 2>/dev/null; then
+            controllers=$(python config/get_controller.py)
+            echo "matrix={\"schema\": $controllers}" >> $GITHUB_OUTPUT
+          else
+            echo "matrix={\"schema\": []}" >> $GITHUB_OUTPUT
+            echo "Warning: get_controller.py failed or returned nothing → empty matrix"
+          fi
 
-  # 2. Extract DDL (runs after matrix, fails fast on error)
+  # 2. DDL Extraction – runs always, fails fast on error
   extract-ddl:
     needs: build-matrix
     runs-on: ubuntu-latest
@@ -72,22 +77,25 @@ jobs:
           SF_WAREHOUSE: ${{ secrets.SF_WAREHOUSE }}
         run: python config/extract_ddl.py
 
-      - name: Commit and push new migrations
+      - name: Commit & push new migrations
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
           git add .
-          git commit -m "Auto-generated migrations from CONFIG_SNOWFLAKE_CICD [skip ci]" || echo "No changes to commit"
-          git push || echo "No changes to push"
+          git commit -m "Auto-generated migrations from CONFIG_SNOWFLAKE_CICD [skip ci]" || echo "Nothing to commit"
+          git push || echo "Nothing to push"
 
-      - name: Cleanup private key
+      - name: Cleanup
         if: always()
         run: rm -f private_key.pem
 
-  # 3. Deploy (only if previous succeeded, skip on [skip ci])
+  # 3. Deploy – only runs if extraction succeeded AND there is something to deploy
   deploy-schema:
-    needs: extract-ddl
-    if: success() && !contains(github.event.head_commit.message, '[skip ci]')
+    needs: [build-matrix, extract-ddl]
+    if: >
+      success() &&
+      needs.extract-ddl.result == 'success' &&
+      needs.build-matrix.outputs.matrix != '{"schema":[]}'
     runs-on: ubuntu-latest
     environment: >-
       ${{ 
