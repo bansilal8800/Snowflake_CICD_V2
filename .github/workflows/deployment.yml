@@ -40,14 +40,14 @@ jobs:
           fi
 
   # 2. DDL Extraction – runs always, fails fast on error
-    extract-ddl:
+  extract-ddl:
     needs: build-matrix
     runs-on: ubuntu-latest
     environment: >-
       ${{ 
         github.ref_name == 'dev' && 'sf_dev_env_cred' || 
         github.ref_name == 'uat' && 'sf_test_env_cred' || 
-        github.ref_name == 'refs/heads/prod' && 'sf_prod_env_cred'
+        github.ref_name == 'prod' && 'sf_prod_env_cred'
       }}
     steps:
       - name: Checkout repository
@@ -92,6 +92,7 @@ jobs:
       - name: Cleanup
         if: always()
         run: rm -f private_key.pem || true
+
   # 3. Deploy – only runs if extraction succeeded AND there is something to deploy
   deploy-schema:
     needs: [build-matrix, extract-ddl]
@@ -104,7 +105,7 @@ jobs:
       ${{ 
         github.ref_name == 'dev' && 'sf_dev_env_cred' || 
         github.ref_name == 'uat' && 'sf_test_env_cred' || 
-        github.ref_name == 'prod' && 'sf_prod_env_cred' 
+        github.ref_name == 'prod' && 'sf_prod_env_cred'
       }}
     strategy:
       matrix: ${{ fromJson(needs.build-matrix.outputs.matrix) }}
