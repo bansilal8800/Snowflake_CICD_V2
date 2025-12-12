@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  # 1. ALWAYS generate the matrix (even if extraction fails)
+  # 1. Generate matrix from controller.yml
   build-matrix:
     runs-on: ubuntu-latest
     outputs:
@@ -28,7 +28,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyyaml schemachange
 
-      - name: Generate matrix (default to empty if script fails)
+      - name: Generate matrix (safe fallback)
         id: set-matrix
         run: |
           if python config/get_controller.py 2>/dev/null; then
@@ -36,10 +36,10 @@ jobs:
             echo "matrix={\"schema\": $controllers}" >> $GITHUB_OUTPUT
           else
             echo "matrix={\"schema\": []}" >> $GITHUB_OUTPUT
-            echo "Warning: get_controller.py failed or returned nothing → empty matrix"
+            echo "Warning: get_controller.py failed → using empty matrix"
           fi
 
-  # 2. DDL Extraction – runs always, fails fast on error
+  # 2. Extract DDLs from CONFIG_SNOWFLAKE_CICD table
   extract-ddl:
     needs: build-matrix
     runs-on: ubuntu-latest
@@ -93,7 +93,7 @@ jobs:
         if: always()
         run: rm -f private_key.pem || true
 
-  # 3. Deploy – only runs if extraction succeeded AND there is something to deploy
+  # 3. Deploy – runs immediately after extraction and sees the new files
   deploy-schema:
     needs: [build-matrix, extract-ddl]
     if: >
@@ -116,12 +116,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Refresh checkout to latest commit (after extraction push)
+      - name: Pull latest changes (includes auto-generated migrations)
         run: |
           git fetch origin
           git checkout ${{ github.ref_name }}
           git pull origin ${{ github.ref_name }}
-          echo "Now at latest commit: $(git rev-parse HEAD)"
+          echo "Deploying from latest commit: $(git rev-parse HEAD)"
 
       - name: Set up Python
         uses: actions/setup-python@v5
